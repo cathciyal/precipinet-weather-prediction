@@ -107,7 +107,7 @@ The API provides:
 
 | Technology | Purpose |
 |------|------|
-| Python | Programming language |
+| R | Programming language |
 | Streamlit | Web application framework |
 | Scikit-learn | Machine learning models |
 | Plotly | Interactive visualizations |
