@@ -1,59 +1,48 @@
 # PrecipiNet – Weather Prediction Dashboard
 
-PrecipiNet is an interactive **Streamlit dashboard** that predicts the probability of **rain and snow** using machine learning models and real-time weather data from the **Open-Meteo API**.  
-The application provides a clean interface for viewing **current weather conditions, precipitation predictions, and model performance metrics**.
+PrecipiNet is an interactive **Shiny dashboard built in R** that predicts the probability of **rain and snow** using machine learning models and real-time weather data from the **Open-Meteo API**.  
+The application provides a clean interface for viewing **current weather conditions and precipitation predictions**.
 
 ---
 
-# Project Overview
+## Project Overview
 
 This project builds a **machine learning weather forecasting dashboard** focused on predicting precipitation events in **Berlin, Germany**.
 
 The system:
 
-- Fetches **real-time weather data** from Open-Meteo
-- Uses trained **logistic regression models** to predict rain and snow
-- Displays predictions with **confidence probabilities**
-- Visualizes **model performance metrics and ROC curves**
+- Fetches **real-time weather data** from Open-Meteo  
+- Uses trained **machine learning models** to predict rain and snow  
+- Displays predictions with **probability scores**  
+- Visualizes **weather trends and forecasts**  
 
 ---
 
-# Features
+## Features
 
 ### Live Weather Data
 - Fetches real-time temperature from **Open-Meteo API**
 - Displays current weather conditions for **Berlin**
 
 ### Rain Prediction
-- Predicts whether rain will occur
-- Displays prediction probability and confidence
+- Predicts whether rain will occur  
+- Displays prediction probability and confidence  
 
 ### Snow Prediction
-- Predicts whether snowfall will occur
-- Displays probability of snow events
-
-### Model Dashboard
-A dedicated model page shows:
-
-- Precision
-- Recall
-- F1 Score
-- Accuracy
-- ROC Curves
-- Feature explanations
+- Predicts whether snowfall will occur  
+- Displays probability of snow events  
 
 ### Interactive Visualizations
 The dashboard uses:
 
-- **Plotly** for performance charts
-- **Matplotlib** for temperature visualization
-- **Streamlit UI** for the interactive interface
+- **Plotly (R)** for interactive charts  
+- **Shiny UI** for the web interface  
 
 ---
 
-# Machine Learning Models
+## Machine Learning Models
 
-Two **Logistic Regression models** are used:
+Two **classification models** are used:
 
 | Model | Target Variable |
 |------|------|
@@ -62,13 +51,12 @@ Two **Logistic Regression models** are used:
 
 ### Prediction Rule
 
-Probability ≥ 0.5 → Event predicted
-Probability < 0.5 → No event predicted
-
+- Probability ≥ 0.7 → Event predicted  
+- Probability < 0.7 → No event predicted  
 
 ---
 
-# Model Features
+## Model Features
 
 The models use the following meteorological variables:
 
@@ -86,51 +74,43 @@ These variables capture atmospheric conditions associated with precipitation eve
 
 ---
 
-# 📡 Data Source
+##  Data Source
 
 Weather data is retrieved from:
 
-**Open-Meteo Weather API**
-
+**Open-Meteo Weather API**  
 https://open-meteo.com/
 
 The API provides:
 
-- Current weather data
-- Hourly forecasts
-- Daily meteorological features
-- Historical weather data
+- Current weather data  
+- Hourly forecasts  
+- Daily meteorological features  
+- Historical weather data  
 
 ---
 
-# Technologies Used
+## 🛠️ Technologies Used
 
 | Technology | Purpose |
 |------|------|
 | R | Programming language |
-| Streamlit | Web application framework |
-| Scikit-learn | Machine learning models |
+| Shiny | Web application framework |
 | Plotly | Interactive visualizations |
-| Matplotlib | Data visualization |
-| Pandas | Data processing |
-| NumPy | Numerical computation |
-| Joblib | Model serialization |
+| dplyr / tibble | Data manipulation |
+| httr2 | API requests |
+| lubridate | Date-time handling |
 | Open-Meteo API | Weather data source |
 
 ---
 
-# Project Structure
-
 precipinet/
 │
-├── app.py
-├── rain_pipe.pkl
-├── snow_pipe.pkl
-├── rain_features.pkl
-├── snow_features.pkl
-├── metrics.pkl
-├── requirements.txt
-└── README.md
-
-
+├── app.R
+├── rain_pipe.rds
+├── snow_pipe.rds
+├── rain_features.rds
+├── snow_features.rds
+├── metrics.rds
+├── README.md
 
