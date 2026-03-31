@@ -1,295 +1,380 @@
 # Done by
 # - Aruna Cathciyal Gilbert Radjou
-# - Ceciliya Souce
 
-import streamlit as st
-import requests
-import numpy as np
-import pandas as pd
-from datetime import datetime, timedelta
-from zoneinfo import ZoneInfo
-import joblib
-import plotly.graph_objects as go
+library(shiny)
+library(httr2)
+library(jsonlite)
+library(dplyr)
+library(lubridate)
+library(plotly)
+library(readr)
+library(tibble)
 
 # -----------------------------
 # Config
 # -----------------------------
-st.set_page_config(page_title="PrecipiNet", page_icon="🌦️", layout="wide")
-BERLIN_LAT = 52.52
-BERLIN_LON = 13.405
-LOCATION_NAME = "Berlin, Germany"
-BERLIN_TZ = ZoneInfo("Europe/Berlin")
-TZ_NAME = "Europe/Berlin"
+BERLIN_LAT <- 52.52
+BERLIN_LON <- 13.405
+LOCATION_NAME <- "Berlin, Germany"
+TZ_NAME <- "Europe/Berlin"
 
 # -----------------------------
 # Load artifacts
 # -----------------------------
-rain_pipe = joblib.load("./rain_pipe.pkl")
-snow_pipe = joblib.load("./snow_pipe.pkl")
-rain_features = joblib.load("./rain_features.pkl")
-snow_features = joblib.load("./snow_features.pkl")
+# IMPORTANT:
+# Replace these with your real R model objects or use reticulate if needed.
+rain_pipe <- readRDS("./rain_pipe.rds")
+snow_pipe <- readRDS("./snow_pipe.rds")
+rain_features <- readRDS("./rain_features.rds")
+snow_features <- readRDS("./snow_features.rds")
 
 # -----------------------------
 # Forecast daily features
 # -----------------------------
-@st.cache_data(ttl=1800)
-def fetch_forecast_daily_features(start_date, end_date):
-    url = "https://api.open-meteo.com/v1/forecast"
-    params = {
-        "latitude": BERLIN_LAT,
-        "longitude": BERLIN_LON,
-        "timezone": TZ_NAME,
-        "start_date": start_date.isoformat(),
-        "end_date": end_date.isoformat(),
-        "daily": ",".join([
-            "temperature_2m_mean",
-            "temperature_2m_min",
-            "temperature_2m_max",
-            "wet_bulb_temperature_2m_mean",
-            "dew_point_2m_mean",
-            "relative_humidity_2m_mean",
-            "cloud_cover_mean",
-            "wind_speed_10m_mean",
-            "pressure_msl_mean",
-        ])
-    }
+fetch_forecast_daily_features <- function(start_date, end_date) {
+  url <- "https://api.open-meteo.com/v1/forecast"
 
-    r = requests.get(url, params=params, timeout=30)
-    r.raise_for_status()
-    j = r.json()
+  daily_vars <- paste(
+    c(
+      "temperature_2m_mean",
+      "temperature_2m_min",
+      "temperature_2m_max",
+      "wet_bulb_temperature_2m_mean",
+      "dew_point_2m_mean",
+      "relative_humidity_2m_mean",
+      "cloud_cover_mean",
+      "wind_speed_10m_mean",
+      "pressure_msl_mean"
+    ),
+    collapse = ","
+  )
 
-    if "daily" not in j or "time" not in j["daily"]:
-        return pd.DataFrame()
+  resp <- request(url) |>
+    req_url_query(
+      latitude = BERLIN_LAT,
+      longitude = BERLIN_LON,
+      timezone = TZ_NAME,
+      start_date = as.character(start_date),
+      end_date = as.character(end_date),
+      daily = daily_vars
+    ) |>
+    req_timeout(30) |>
+    req_perform()
 
-    df = pd.DataFrame(j["daily"])
-    df["time"] = pd.to_datetime(df["time"]).dt.date
-    return df
+  j <- resp_body_json(resp, simplifyVector = TRUE)
+
+  if (is.null(j$daily) || is.null(j$daily$time)) {
+    return(tibble())
+  }
+
+  df <- as_tibble(j$daily)
+  df$time <- as.Date(df$time)
+
+  df
+}
 
 # -----------------------------
 # Prediction: next 5 days
 # -----------------------------
-def predict_next_5_days():
-    today = datetime.now(BERLIN_TZ).date()
-    end_date = today + timedelta(days=5)
+predict_next_5_days <- function() {
+  today <- as.Date(with_tz(Sys.time(), tzone = TZ_NAME))
+  end_date <- today + days(5)
 
-    df = fetch_forecast_daily_features(today, end_date)
-    results = []
+  df <- fetch_forecast_daily_features(today, end_date)
 
-    for _, row in df.iterrows():
-        Xr = row[rain_features].to_frame().T
-        Xs = row[snow_features].to_frame().T
+  if (nrow(df) == 0) {
+    return(tibble())
+  }
 
-        rain_prob = float(rain_pipe.predict_proba(Xr)[0, 1])
-        snow_prob = float(snow_pipe.predict_proba(Xs)[0, 1])
+  results <- lapply(seq_len(nrow(df)), function(i) {
+    row <- df[i, , drop = FALSE]
 
-        results.append({
-            "date": row["time"],
-            "rain_prob": rain_prob,
-            "rain_yes": rain_prob >= 0.7,
-            "snow_prob": snow_prob,
-            "snow_yes": snow_prob >= 0.7,
-        })
+    Xr <- row[, rain_features, drop = FALSE]
+    Xs <- row[, snow_features, drop = FALSE]
 
-    return results
+    # Assumes models return class probabilities with type = "prob"
+    rain_pred <- predict(rain_pipe, Xr, type = "prob")
+    snow_pred <- predict(snow_pipe, Xs, type = "prob")
 
-# -----------------------------
-# Interactive chart (high contrast)
-# -----------------------------
-def plot_5day_probabilities(results):
-    dates = [r["date"].strftime("%d %b") for r in results]
-    rain_probs = [r["rain_prob"] * 100 for r in results]
-    snow_probs = [r["snow_prob"] * 100 for r in results]
+    # Assumes the positive class is in column 2 or named "1"/"yes"
+    rain_prob <- as.numeric(rain_pred[[ncol(rain_pred)]])
+    snow_prob <- as.numeric(snow_pred[[ncol(snow_pred)]])
 
-    fig = go.Figure()
-
-    fig.add_trace(go.Scatter(
-        x=dates,
-        y=rain_probs,
-        mode="lines+markers",
-        name="Rain Probability 🌧️",
-        line=dict(color="#0B3C5D", width=4),
-        marker=dict(size=9, color="#0B3C5D",
-                    line=dict(width=2, color="white")),
-    ))
-
-    fig.add_trace(go.Scatter(
-        x=dates,
-        y=snow_probs,
-        mode="lines+markers",
-        name="Snow Probability ❄️",
-        line=dict(color="#EAF6FF", width=4),
-        marker=dict(size=9, color="#EAF6FF",
-                    line=dict(width=2, color="#0B3C5D")),
-    ))
-
-    fig.update_layout(
-        title=dict(
-            text="Rain & Snow Probability — Next 5 Days",
-            font=dict(size=22, color="white"),
-            x=0.02
-        ),
-        xaxis=dict(
-            title="Date",
-            tickfont=dict(color="white"),
-            titlefont=dict(color="white"),
-            showgrid=False
-        ),
-        yaxis=dict(
-            title="Probability (%)",
-            tickfont=dict(color="white"),
-            titlefont=dict(color="white"),
-            range=[0, 100],
-            gridcolor="rgba(255,255,255,0.25)",
-            zerolinecolor="rgba(255,255,255,0.4)"
-        ),
-        hovermode="x unified",
-        paper_bgcolor="rgba(0,0,0,0)",
-        plot_bgcolor="rgba(0,0,0,0)",
-        font=dict(color="white"),
-        legend=dict(
-            orientation="h",
-            yanchor="bottom",
-            y=1.05,
-            xanchor="right",
-            x=1,
-            font=dict(color="white")
-        ),
-        margin=dict(l=50, r=40, t=80, b=50),
+    tibble(
+      date = row$time,
+      rain_prob = rain_prob,
+      rain_yes = rain_prob >= 0.7,
+      snow_prob = snow_prob,
+      snow_yes = snow_prob >= 0.7
     )
+  })
 
-    return fig
+  bind_rows(results)
+}
+
+# -----------------------------
+# Interactive chart
+# -----------------------------
+plot_5day_probabilities <- function(results) {
+  if (nrow(results) == 0) return(NULL)
+
+  dates <- format(results$date, "%d %b")
+  rain_probs <- results$rain_prob * 100
+  snow_probs <- results$snow_prob * 100
+
+  plot_ly() |>
+    add_trace(
+      x = dates,
+      y = rain_probs,
+      type = "scatter",
+      mode = "lines+markers",
+      name = "Rain Probability 🌧️",
+      line = list(color = "#0B3C5D", width = 4),
+      marker = list(size = 9, color = "#0B3C5D", line = list(width = 2, color = "white"))
+    ) |>
+    add_trace(
+      x = dates,
+      y = snow_probs,
+      type = "scatter",
+      mode = "lines+markers",
+      name = "Snow Probability ❄️",
+      line = list(color = "#EAF6FF", width = 4),
+      marker = list(size = 9, color = "#EAF6FF", line = list(width = 2, color = "#0B3C5D"))
+    ) |>
+    layout(
+      title = list(
+        text = "Rain & Snow Probability — Next 5 Days",
+        font = list(size = 22, color = "white"),
+        x = 0.02
+      ),
+      xaxis = list(
+        title = "Date",
+        tickfont = list(color = "white"),
+        titlefont = list(color = "white"),
+        showgrid = FALSE
+      ),
+      yaxis = list(
+        title = "Probability (%)",
+        tickfont = list(color = "white"),
+        titlefont = list(color = "white"),
+        range = c(0, 100),
+        gridcolor = "rgba(255,255,255,0.25)",
+        zerolinecolor = "rgba(255,255,255,0.4)"
+      ),
+      hovermode = "x unified",
+      paper_bgcolor = "rgba(0,0,0,0)",
+      plot_bgcolor = "rgba(0,0,0,0)",
+      font = list(color = "white"),
+      legend = list(
+        orientation = "h",
+        yanchor = "bottom",
+        y = 1.05,
+        xanchor = "right",
+        x = 1,
+        font = list(color = "white")
+      ),
+      margin = list(l = 50, r = 40, t = 80, b = 50)
+    )
+}
 
 # -----------------------------
 # Current temperature + hourly
 # -----------------------------
-@st.cache_data(ttl=300)
-def fetch_berlin_today():
-    url = "https://api.open-meteo.com/v1/forecast"
-    params = {
-        "latitude": BERLIN_LAT,
-        "longitude": BERLIN_LON,
-        "current": "temperature_2m",
-        "hourly": "temperature_2m",
-        "timezone": TZ_NAME
-    }
-    r = requests.get(url, params=params, timeout=30)
-    r.raise_for_status()
-    j = r.json()
+fetch_berlin_today <- function() {
+  url <- "https://api.open-meteo.com/v1/forecast"
 
-    current_temp = float(j["current"]["temperature_2m"])
-    df_hourly = pd.DataFrame({
-        "time": pd.to_datetime(j["hourly"]["time"]),
-        "temp": j["hourly"]["temperature_2m"]
-    })
+  resp <- request(url) |>
+    req_url_query(
+      latitude = BERLIN_LAT,
+      longitude = BERLIN_LON,
+      current = "temperature_2m",
+      hourly = "temperature_2m",
+      timezone = TZ_NAME
+    ) |>
+    req_timeout(30) |>
+    req_perform()
 
-    today = pd.Timestamp.now(tz=TZ_NAME).date()
-    df_hourly = df_hourly[df_hourly["time"].dt.date == today]
+  j <- resp_body_json(resp, simplifyVector = TRUE)
 
-    return current_temp, df_hourly
+  current_temp <- as.numeric(j$current$temperature_2m)
 
-temp_c, df_hourly = fetch_berlin_today()
-now = datetime.now(BERLIN_TZ)
+  df_hourly <- tibble(
+    time = ymd_hms(j$hourly$time, tz = TZ_NAME),
+    temp = as.numeric(j$hourly$temperature_2m)
+  )
 
-# -----------------------------
-# CSS
-# -----------------------------
-st.markdown("""
-<style>
-.stApp {
-  background: linear-gradient(135deg, #6aa9e8 0%, #3e79bd 55%, #2d5f9f 100%);
+  today <- as.Date(with_tz(Sys.time(), tzone = TZ_NAME))
+  df_hourly <- df_hourly |> filter(as.Date(time) == today)
+
+  list(current_temp = current_temp, df_hourly = df_hourly)
 }
-header, footer {visibility: hidden;}
-.card {
-  background: rgba(255,255,255,0.12);
-  border: 1px solid rgba(255,255,255,0.20);
-  border-radius: 24px;
-  padding: 24px;
-  box-shadow: 0 20px 60px rgba(0,0,0,0.25);
-}
-.bigTitle {
-  color:white;
-  font-size:78px;
-  font-weight:800;
-}
-</style>
-""", unsafe_allow_html=True)
 
 # -----------------------------
-# HEADER
+# UI
 # -----------------------------
-st.markdown(
-    f"""
-<div style="display:flex; justify-content:space-between; color:white; font-weight:600;">
-  <div>⬡ Weather Forecast</div>
-  <div>{now.strftime("%H:%M")} · {now.strftime("%d %b %Y")} · {LOCATION_NAME}</div>
-</div>
-""",
-    unsafe_allow_html=True
+ui <- fluidPage(
+  tags$head(
+    tags$style(HTML("
+      body, .container-fluid {
+        background: linear-gradient(135deg, #6aa9e8 0%, #3e79bd 55%, #2d5f9f 100%);
+        min-height: 100vh;
+      }
+      .topbar {
+        display:flex;
+        justify-content:space-between;
+        color:white;
+        font-weight:600;
+        margin-bottom:20px;
+      }
+      .bigTitle {
+        color:white;
+        font-size:78px;
+        font-weight:800;
+      }
+      .card {
+        background: rgba(255,255,255,0.12);
+        border: 1px solid rgba(255,255,255,0.20);
+        border-radius: 24px;
+        padding: 24px;
+        box-shadow: 0 20px 60px rgba(0,0,0,0.25);
+        color: white;
+        min-height: 170px;
+      }
+      .section-title {
+        font-size:78px;
+        font-weight:800;
+        color:white;
+      }
+      .sub-title {
+        font-size:34px;
+        color:white;
+      }
+      .temp-big {
+        text-align:right;
+        font-size:115px;
+        font-weight:800;
+        color:white;
+      }
+      h3 {
+        color: white;
+      }
+      .shiny-plot-output, .plotly {
+        background: transparent !important;
+      }
+    "))
+  ),
+
+  div(class = "topbar",
+      div("⬡ Weather Forecast"),
+      textOutput("header_time", inline = TRUE)
+  ),
+
+  fluidRow(
+    column(
+      width = 8,
+      div(class = "section-title", "Today"),
+      div(class = "sub-title", "Current Temperature")
+    ),
+    column(
+      width = 4,
+      uiOutput("current_temp_ui")
+    )
+  ),
+
+  br(),
+  div(class = "bigTitle", "Next 5 Days Prediction 🌧️ ❄️"),
+  br(),
+  plotlyOutput("prob_plot", height = "450px"),
+  br(),
+  uiOutput("prediction_cards"),
+
+  tags$hr(),
+  h3("Hourly Temperature — Today (Berlin)"),
+  plotlyOutput("hourly_plot", height = "300px")
 )
 
 # -----------------------------
-# TODAY
+# Server
 # -----------------------------
-left, right = st.columns([1.6, 1], gap="large")
+server <- function(input, output, session) {
 
-with left:
-    st.markdown("<div style='font-size:78px; font-weight:800; color:white;'>Today</div>", unsafe_allow_html=True)
-    st.markdown("<div style='font-size:34px; color:white;'>Current Temperature</div>", unsafe_allow_html=True)
+  today_data <- reactive({
+    fetch_berlin_today()
+  })
 
-with right:
-    st.markdown(
-        f"<div style='text-align:right; font-size:115px; font-weight:800; color:white;'>{temp_c:.0f}°</div>",
-        unsafe_allow_html=True
-    )
+  predictions <- reactive({
+    predict_next_5_days()
+  })
 
-# -----------------------------
-# 5-DAY PREDICTION
-# -----------------------------
-st.write("")
-st.markdown("<div class='bigTitle'>Next 5 Days Prediction 🌧️ ❄️</div>", unsafe_allow_html=True)
+  output$header_time <- renderText({
+    now <- with_tz(Sys.time(), tzone = TZ_NAME)
+    paste0(format(now, "%H:%M"), " · ", format(now, "%d %b %Y"), " · ", LOCATION_NAME)
+  })
 
-results = predict_next_5_days()
+  output$current_temp_ui <- renderUI({
+    temp_c <- today_data()$current_temp
+    div(class = "temp-big", sprintf("%.0f°", temp_c))
+  })
 
-# Interactive chart
-st.plotly_chart(plot_5day_probabilities(results), use_container_width=True)
+  output$prob_plot <- renderPlotly({
+    results <- predictions()
+    plot_5day_probabilities(results)
+  })
 
-# Cards (YES / NO only)
-cols = st.columns(len(results), gap="medium")
+  output$prediction_cards <- renderUI({
+    results <- predictions()
 
-for col, res in zip(cols, results):
-    with col:
-        st.markdown(
-            f"""
-            <div class="card">
-              <div style="font-size:18px; font-weight:900; color:white;">
-                {res["date"].strftime('%d %b')}
+    if (nrow(results) == 0) {
+      return(div(style = "color:white;", "No prediction data available."))
+    }
+
+    fluidRow(
+      lapply(seq_len(nrow(results)), function(i) {
+        res <- results[i, ]
+
+        column(
+          width = floor(12 / nrow(results)),
+          div(
+            class = "card",
+            HTML(sprintf("
+              <div style='font-size:18px; font-weight:900; color:white;'>%s</div>
+
+              <div style='margin-top:14px;'>
+                <b style='color:white;'>🌧 Rain</b><br/>
+                <span style='color:white; font-size:18px; font-weight:700;'>%s</span>
               </div>
 
-              <div style="margin-top:14px;">
-                <b style="color:white;">🌧 Rain</b><br/>
-                <span style="color:white; font-size:18px; font-weight:700;">
-                  {"Yes ✅" if res["rain_yes"] else "No ❌"}
-                </span>
+              <div style='margin-top:12px;'>
+                <b style='color:white;'>❄️ Snow</b><br/>
+                <span style='color:white; font-size:18px; font-weight:700;'>%s</span>
               </div>
-
-              <div style="margin-top:12px;">
-                <b style="color:white;">❄️ Snow</b><br/>
-                <span style="color:white; font-size:18px; font-weight:700;">
-                  {"Yes ✅" if res["snow_yes"] else "No ❌"}
-                </span>
-              </div>
-            </div>
-            """,
-            unsafe_allow_html=True
+            ",
+            format(res$date, "%d %b"),
+            ifelse(res$rain_yes, "Yes ✅", "No ❌"),
+            ifelse(res$snow_yes, "Yes ✅", "No ❌")
+            ))
+          )
         )
+      })
+    )
+  })
 
-# -----------------------------
-# HOURLY TEMPERATURE
-# -----------------------------
-st.markdown("---")
-st.markdown("### Hourly Temperature — Today (Berlin)")
+  output$hourly_plot <- renderPlotly({
+    df_hourly <- today_data()$df_hourly
 
-if df_hourly.empty:
-    st.warning("No hourly temperature data available for today.")
-else:
-    st.line_chart(df_hourly.set_index("time")[["temp"]])
+    if (nrow(df_hourly) == 0) {
+      return(plot_ly() |> layout(title = "No hourly temperature data available for today."))
+    }
+
+    plot_ly(df_hourly, x = ~time, y = ~temp, type = "scatter", mode = "lines+markers") |>
+      layout(
+        paper_bgcolor = "rgba(0,0,0,0)",
+        plot_bgcolor = "rgba(0,0,0,0)",
+        font = list(color = "white"),
+        xaxis = list(title = "Time"),
+        yaxis = list(title = "Temperature (°C)")
+      )
+  })
+}
+
+shinyApp(ui, server)
