@@ -1,6 +1,6 @@
 # Done by
 # - Aruna Cathciyal Gilbert Radjou
-# - Ceciliya Souce
+
 
 import streamlit as st
 import requests
@@ -11,9 +11,8 @@ from zoneinfo import ZoneInfo
 import joblib
 import plotly.graph_objects as go
 
-# -----------------------------
+
 # Config
-# -----------------------------
 st.set_page_config(page_title="PrecipiNet", page_icon="🌦️", layout="wide")
 BERLIN_LAT = 52.52
 BERLIN_LON = 13.405
@@ -21,17 +20,15 @@ LOCATION_NAME = "Berlin, Germany"
 BERLIN_TZ = ZoneInfo("Europe/Berlin")
 TZ_NAME = "Europe/Berlin"
 
-# -----------------------------
+
 # Load artifacts
-# -----------------------------
 rain_pipe = joblib.load("./rain_pipe.pkl")
 snow_pipe = joblib.load("./snow_pipe.pkl")
 rain_features = joblib.load("./rain_features.pkl")
 snow_features = joblib.load("./snow_features.pkl")
 
-# -----------------------------
+
 # Forecast daily features
-# -----------------------------
 @st.cache_data(ttl=1800)
 def fetch_forecast_daily_features(start_date, end_date):
     url = "https://api.open-meteo.com/v1/forecast"
@@ -65,9 +62,8 @@ def fetch_forecast_daily_features(start_date, end_date):
     df["time"] = pd.to_datetime(df["time"]).dt.date
     return df
 
-# -----------------------------
+
 # Prediction: next 5 days
-# -----------------------------
 def predict_next_5_days():
     today = datetime.now(BERLIN_TZ).date()
     end_date = today + timedelta(days=5)
@@ -92,9 +88,8 @@ def predict_next_5_days():
 
     return results
 
-# -----------------------------
+
 # Interactive chart (high contrast)
-# -----------------------------
 def plot_5day_probabilities(results):
     dates = [r["date"].strftime("%d %b") for r in results]
     rain_probs = [r["rain_prob"] * 100 for r in results]
@@ -159,9 +154,8 @@ def plot_5day_probabilities(results):
 
     return fig
 
-# -----------------------------
+-
 # Current temperature + hourly
-# -----------------------------
 @st.cache_data(ttl=300)
 def fetch_berlin_today():
     url = "https://api.open-meteo.com/v1/forecast"
@@ -190,9 +184,8 @@ def fetch_berlin_today():
 temp_c, df_hourly = fetch_berlin_today()
 now = datetime.now(BERLIN_TZ)
 
-# -----------------------------
+
 # CSS
-# -----------------------------
 st.markdown("""
 <style>
 .stApp {
@@ -227,9 +220,8 @@ st.markdown(
     unsafe_allow_html=True
 )
 
-# -----------------------------
+
 # TODAY
-# -----------------------------
 left, right = st.columns([1.6, 1], gap="large")
 
 with left:
@@ -242,9 +234,7 @@ with right:
         unsafe_allow_html=True
     )
 
-# -----------------------------
 # 5-DAY PREDICTION
-# -----------------------------
 st.write("")
 st.markdown("<div class='bigTitle'>Next 5 Days Prediction 🌧️ ❄️</div>", unsafe_allow_html=True)
 
@@ -283,9 +273,8 @@ for col, res in zip(cols, results):
             unsafe_allow_html=True
         )
 
-# -----------------------------
+
 # HOURLY TEMPERATURE
-# -----------------------------
 st.markdown("---")
 st.markdown("### Hourly Temperature — Today (Berlin)")
 
